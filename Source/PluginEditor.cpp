@@ -236,8 +236,11 @@ ShapeModEditor::ShapeModEditor (ShapeModProcessor& p)
     for (auto* k : { &phaseKnob, &depthKnob, &smoothKnob })
     {
         k->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-        k->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 64, 16);
         addAndMakeVisible (*k);
+        k->setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+        k->setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+        k->setColour (juce::Slider::textBoxTextColourId, Theme::text);
+        k->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 64, 16);
     }
     phaseAttach  = std::make_unique<SliderAttachment> (processor.apvts, "phase", phaseKnob);
     depthAttach  = std::make_unique<SliderAttachment> (processor.apvts, "depth", depthKnob);

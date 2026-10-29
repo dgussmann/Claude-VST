@@ -221,6 +221,25 @@ int main (int argc, char** argv)
     const auto v2 = hosted->getParameters()[depthIndex]->getValue();
     check (std::abs (v2 - v1) > 0.001f, "free run moves while the transport is stopped");
 
+    // Optional: render the editor to a PNG for a visual check.
+    if (argc >= 3)
+    {
+        setParam (proc, "trigger", 0.0f);
+        proc.setShape (Shape::factory ("Sidechain Duck"));
+        proc.getSlot (1).rangeMin = 0.2f;
+        proc.getSlot (1).rangeMax = 0.8f;
+        proc.assignSlot (1, findParam (*hosted, "Smooth"));
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setVisible (true);
+        auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
+        juce::File out { juce::String (argv[2]) };
+        out.deleteFile();
+        juce::FileOutputStream stream (out);
+        juce::PNGImageFormat().writeImageToStream (image, stream);
+        std::cout << "Wrote " << out.getFullPathName() << " (" << editor->getWidth() << "x" << editor->getHeight() << ")" << std::endl;
+        editor.reset();
+    }
+
     proc.releaseResources();
     restored.releaseResources();
 

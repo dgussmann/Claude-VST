@@ -125,7 +125,7 @@ private:
     std::atomic<int> pendingLearnParam { -1 };
     juce::Rectangle<int> panelBounds;
 
-    static constexpr int panelHeight = 440;
+    static constexpr int panelHeight = 462;
     static constexpr int minWidth = 980;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ShapeModEditor)
