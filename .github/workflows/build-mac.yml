@@ -1,0 +1,62 @@
+name: Build macOS plugin
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Cache JUCE download
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-8.0.16-security-${{ runner.os }}-v1
+
+      - name: Configure (universal: Apple Silicon + Intel)
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          -DSHAPEMOD_BUILD_TESTS=ON
+
+      - name: Build plugins and test
+        run: cmake --build build --target ShapeModFX_VST3 ShapeModInstrument_VST3 ShapeModTest -j 4
+
+      - name: Sign for local use (ad-hoc)
+        run: |
+          codesign --force --deep --sign - "build/ShapeModFX_artefacts/Release/VST3/ShapeMod FX.vst3"
+          codesign --force --deep --sign - "build/ShapeModInstrument_artefacts/Release/VST3/ShapeMod Instrument.vst3"
+
+      - name: Run engine test (hosts the built FX plugin)
+        run: |
+          ./build/ShapeModTest_artefacts/Release/ShapeModTest "build/ShapeModFX_artefacts/Release/VST3/ShapeMod FX.vst3"
+
+      - name: Check architectures
+        run: |
+          lipo -info "build/ShapeModFX_artefacts/Release/VST3/ShapeMod FX.vst3/Contents/MacOS/ShapeMod FX"
+          lipo -info "build/ShapeModInstrument_artefacts/Release/VST3/ShapeMod Instrument.vst3/Contents/MacOS/ShapeMod Instrument"
+
+      - name: Package
+        run: |
+          mkdir -p dist/ShapeMod
+          cp -R "build/ShapeModFX_artefacts/Release/VST3/ShapeMod FX.vst3" dist/ShapeMod/
+          cp -R "build/ShapeModInstrument_artefacts/Release/VST3/ShapeMod Instrument.vst3" dist/ShapeMod/
+          cp INSTALL.txt dist/ShapeMod/
+          cd dist && ditto -c -k --sequesterRsrc --keepParent ShapeMod ShapeMod-mac.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShapeMod-mac
+          path: dist/ShapeMod-mac.zip
+          retention-days: 30

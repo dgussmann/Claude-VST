@@ -1,0 +1,21 @@
+ShapeMod - installing on your Mac
+==================================
+
+1. Copy both .vst3 files into this folder (create it if it's missing):
+
+     ~/Library/Audio/Plug-Ins/VST3
+
+   In Finder: Go menu > Go to Folder... and paste the path above.
+
+2. macOS blocks plugins downloaded from the internet. Open Terminal and paste:
+
+     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ShapeMod*
+
+3. In Ableton Live 12: Settings > Plug-Ins > turn on "Use VST3 Plug-in System Folders",
+   then click Rescan. ShapeMod appears under Plug-Ins > dgussmann.
+
+Which one to use
+----------------
+ShapeMod Instrument  Put it on a MIDI track in place of a synth. Load your synth inside it.
+                     Notes from the track are passed through to the synth.
+ShapeMod FX          Put it on any track's effect chain. Load an effect inside it.
