@@ -105,7 +105,7 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
-    const juce::File pluginFile (juce::String (argv[1]));
+    const juce::File pluginFile { juce::String (argv[1]) };
     constexpr double sr = 48000.0;
     constexpr int block = 512;
 
