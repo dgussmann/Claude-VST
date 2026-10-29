@@ -751,7 +751,9 @@ void ShapeModEditor::showShapeMenu()
     Node tree;
     for (int i = 0; i < allFiles.size(); ++i)
     {
-        auto parts = juce::StringArray::fromTokens (allFiles[i].getParentDirectory().getRelativePathFrom (root), "/\\", {});
+        juce::StringArray parts;
+        if (allFiles[i].isAChildOf (root) && allFiles[i].getParentDirectory() != root)
+            parts = juce::StringArray::fromTokens (allFiles[i].getParentDirectory().getRelativePathFrom (root), "/\\", {});
         parts.removeString (".");
         parts.removeEmptyStrings();
 

@@ -3,39 +3,66 @@
 #include "Shape.h"
 
 // Saves and loads user shapes as small JSON files (*.shape).
-// macOS: ~/Library/Application Support/ShapeMod/Shapes
+// macOS: ~/Library/Audio/Presets/ShapeMod/Shapes (older builds used ~/Library/Application Support/ShapeMod/Shapes)
 namespace ShapeLibrary
 {
+    // Where shapes live. macOS: ~/Library/Audio/Presets/ShapeMod/Shapes, the usual place for plugin presets.
     inline juce::File folder()
     {
        #if JUCE_MAC
-        auto base = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                        .getChildFile ("Application Support");
+        auto dir = juce::File::getSpecialLocation (juce::File::userHomeDirectory)
+                       .getChildFile ("Library/Audio/Presets/ShapeMod/Shapes");
        #else
-        auto base = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
+        auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                       .getChildFile ("ShapeMod").getChildFile ("Shapes");
        #endif
-        auto dir = base.getChildFile ("ShapeMod").getChildFile ("Shapes");
         dir.createDirectory();
         return dir;
     }
 
-    // Shapes saved directly in the folder (your own saves).
+    // Builds up to 7 saved shapes in ~/Library/Application Support/ShapeMod/Shapes; still read from there.
+    inline juce::File legacyFolder()
+    {
+       #if JUCE_MAC
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                   .getChildFile ("Application Support/ShapeMod/Shapes");
+       #else
+        return {};
+       #endif
+    }
+
+    inline juce::Array<juce::File> looseShapesIn (const juce::File& dir)
+    {
+        if (dir == juce::File() || ! dir.isDirectory())
+            return {};
+        return dir.findChildFiles (juce::File::findFiles, false, "*.shape");
+    }
+
+    // Shapes saved directly in the folder (your own saves), including those from the old location.
     inline juce::Array<juce::File> list()
     {
-        auto files = folder().findChildFiles (juce::File::findFiles, false, "*.shape");
-        files.sort();
+        auto files = looseShapesIn (folder());
+        if (legacyFolder() != folder())
+            files.addArray (looseShapesIn (legacyFolder()));
+        std::sort (files.begin(), files.end(), [] (const juce::File& x, const juce::File& y)
+        {
+            return x.getFileName().compareNatural (y.getFileName()) < 0;
+        });
         return files;
     }
 
-    // Every shape, including those in subfolders (e.g. imported libraries), sorted by path.
+    // Every shape: your own saves, then everything in subfolders (imported libraries), sorted by path.
     inline juce::Array<juce::File> listAll()
     {
-        auto files = folder().findChildFiles (juce::File::findFiles, true, "*.shape");
-        std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
+        const auto root = folder();
+        auto files = list();
+        auto nested = root.findChildFiles (juce::File::findFiles, true, "*.shape");
+        nested.removeIf ([&] (const juce::File& f) { return f.getParentDirectory() == root; });
+        std::sort (nested.begin(), nested.end(), [&] (const juce::File& x, const juce::File& y)
         {
-            const auto root = folder();
-            return a.getRelativePathFrom (root).compareNatural (b.getRelativePathFrom (root)) < 0;
+            return x.getRelativePathFrom (root).compareNatural (y.getRelativePathFrom (root)) < 0;
         });
+        files.addArray (nested);
         return files;
     }
 

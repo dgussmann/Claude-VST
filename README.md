@@ -6,7 +6,7 @@ Built for Ableton Live 12 on Apple Silicon and Intel Macs.
 ## What it does
 
 - **Draw a shape**: add points, drag the diamonds to curve segments, or switch to Draw mode and paint steps on the grid.
-- **Save shapes**: Shapes > Save shape as... stores them in `~/Library/Application Support/ShapeMod/Shapes`.
+- **Save shapes**: Shapes > Save shape as... stores them in `~/Library/Audio/Presets/ShapeMod/Shapes`. Subfolders there show up under **Libraries** in the Shapes menu.
 - **Modulate another plugin**: Load plugin > pick any VST3. It opens inside ShapeMod. Click **Learn** on a target row
   and wiggle a knob in the plugin, or pick a parameter from the list. Up to 8 targets, each with its own range and invert.
 - **Tempo sync from 1/8 bar to 4 bars**, plus dotted and triplet feels, phase offset, depth and smoothing.
