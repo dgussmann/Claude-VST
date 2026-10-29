@@ -527,6 +527,11 @@ void ShapeModEditor::parameterValueChanged (int parameterIndex, float)
     if (learnSlot < 0 || ! onMessageThread() || processor.isParamModulated (parameterIndex))
         return;
 
+    if (auto* plugin = processor.getHostedPlugin();
+        plugin == nullptr || ! juce::isPositiveAndBelow (parameterIndex, plugin->getParameters().size())
+         || ! ShapeModProcessor::isUsefulTarget (*plugin->getParameters()[parameterIndex]))
+        return;
+
     pendingLearnParam = parameterIndex;
     triggerAsyncUpdate();
 }
@@ -579,6 +584,7 @@ void ShapeModEditor::showParameterMenu (int slot, juce::Component& anchor)
 
     const auto& params = plugin->getParameters();
     const auto current = processor.getSlot (slot).paramIndex.load();
+    const auto useful = processor.getUsefulTargetIndices();
 
     juce::PopupMenu menu;
     menu.addItem (1, "None", true, current < 0);
@@ -590,21 +596,24 @@ void ShapeModEditor::showParameterMenu (int slot, juce::Component& anchor)
         m.addItem (i + 2, name.isEmpty() ? "Param " + juce::String (i + 1) : name, true, i == current);
     };
 
-    constexpr int groupSize = 50;
-    if (params.size() <= 60)
+    constexpr int groupSize = 40;
+    const auto count = (int) useful.size();
+
+    if (count <= 60)
     {
-        for (int i = 0; i < params.size(); ++i)
+        for (auto i : useful)
             addParam (menu, i);
     }
     else
     {
-        for (int startIdx = 0; startIdx < params.size(); startIdx += groupSize)
+        for (int start = 0; start < count; start += groupSize)
         {
-            const auto endIdx = juce::jmin (startIdx + groupSize, params.size());
+            const auto end = juce::jmin (start + groupSize, count);
             juce::PopupMenu sub;
-            for (int i = startIdx; i < endIdx; ++i)
-                addParam (sub, i);
-            menu.addSubMenu (params[startIdx]->getName (24) + "  ...  " + params[endIdx - 1]->getName (24), sub);
+            for (int k = start; k < end; ++k)
+                addParam (sub, useful[(size_t) k]);
+            menu.addSubMenu (params[useful[(size_t) start]]->getName (24) + "  ...  "
+                               + params[useful[(size_t) end - 1]]->getName (24), sub);
         }
     }
 

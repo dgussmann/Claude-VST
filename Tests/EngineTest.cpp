@@ -129,6 +129,17 @@ int main (int argc, char** argv)
     const auto depthIndex = findParam (*hosted, "Depth");
     check (depthIndex >= 0, "found hosted parameter \"Depth\"");
 
+    {
+        const auto useful = proc.getUsefulTargetIndices();
+        const auto total = hosted->getParameters().size();
+        bool anyMidiCC = false;
+        for (auto i : useful)
+            anyMidiCC = anyMidiCC || hosted->getParameters()[i]->getName (64).startsWith ("MIDI CC");
+        check (total > 1000 && useful.size() < 20 && ! anyMidiCC,
+               "target list hides hidden MIDI CC parameters (" + juce::String ((int) useful.size()) + " of " + juce::String (total) + " shown)");
+        check (std::find (useful.begin(), useful.end(), depthIndex) != useful.end(), "real knobs stay in the target list");
+    }
+
     proc.assignSlot (0, depthIndex);
     proc.getSlot (0).rangeMin = 0.0f;
     proc.getSlot (0).rangeMax = 1.0f;

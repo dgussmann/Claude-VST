@@ -96,6 +96,11 @@ public:
     void clearSlot (int slot);
     bool isParamModulated (int paramIndex) const noexcept;
 
+    // True for parameters worth offering as targets. Hides the ~2000 hidden "MIDI CC x|y"
+    // parameters that JUCE-built plugins add, and anything the plugin marks as not automatable.
+    static bool isUsefulTarget (const juce::AudioProcessorParameter&);
+    std::vector<int> getUsefulTargetIndices() const;
+
     // Live display values for the editor
     float getDisplayPhase() const noexcept { return displayPhase.load(); }
     float getDisplayValue() const noexcept { return displayValue.load(); }

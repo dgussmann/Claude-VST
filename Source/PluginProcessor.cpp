@@ -549,6 +549,42 @@ bool ShapeModProcessor::isParamModulated (int paramIndex) const noexcept
     return false;
 }
 
+bool ShapeModProcessor::isUsefulTarget (const juce::AudioProcessorParameter& param)
+{
+    if (! param.isAutomatable())
+        return false;
+
+    const auto name = param.getName (64).trim();
+    if (name.isEmpty())
+        return false;
+
+    // "MIDI CC 3|74" style controller-emulation parameters
+    if (name.startsWith ("MIDI CC ") && name.containsChar ('|')
+         && name.substring (8).removeCharacters ("|").containsOnly ("0123456789"))
+        return false;
+
+    return true;
+}
+
+std::vector<int> ShapeModProcessor::getUsefulTargetIndices() const
+{
+    std::vector<int> result;
+    if (hosted == nullptr)
+        return result;
+
+    const auto& params = hosted->getParameters();
+    for (int i = 0; i < params.size(); ++i)
+        if (isUsefulTarget (*params[i]))
+            result.push_back (i);
+
+    // Some plugins mark nothing as automatable; fall back to everything rather than an empty list.
+    if (result.empty())
+        for (int i = 0; i < params.size(); ++i)
+            result.push_back (i);
+
+    return result;
+}
+
 void ShapeModProcessor::timerCallback()
 {
     if (hosted == nullptr)
