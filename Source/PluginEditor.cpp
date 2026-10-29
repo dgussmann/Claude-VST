@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "ShapeLibrary.h"
+#include <map>
 
 namespace
 {
@@ -718,18 +719,62 @@ void ShapeModEditor::loadPluginFile (const juce::File& file)
 void ShapeModEditor::showShapeMenu()
 {
     const auto factoryNames = Shape::factoryNames();
-    const auto userFiles = ShapeLibrary::list();
+    const auto userFiles = ShapeLibrary::list();      // saved directly in the folder
+    const auto allFiles = ShapeLibrary::listAll();    // including subfolders (imported libraries)
+    const auto root = ShapeLibrary::folder();
+
+    constexpr int loadBase = 10000, deleteBase = 50000;
 
     juce::PopupMenu factory;
     for (int i = 0; i < factoryNames.size(); ++i)
         factory.addItem (100 + i, factoryNames[i]);
 
+    // Folders become submenus, nested as deep as the folders go.
+    struct Node
+    {
+        std::map<juce::String, Node> folders;
+        std::vector<std::pair<int, juce::String>> shapes;
+
+        juce::PopupMenu build() const
+        {
+            juce::PopupMenu m;
+            for (const auto& [name, child] : folders)
+                m.addSubMenu (name, child.build());
+            if (! folders.empty() && ! shapes.empty())
+                m.addSeparator();
+            for (const auto& [id, name] : shapes)
+                m.addItem (id, name);
+            return m;
+        }
+    };
+
+    Node tree;
+    for (int i = 0; i < allFiles.size(); ++i)
+    {
+        auto parts = juce::StringArray::fromTokens (allFiles[i].getParentDirectory().getRelativePathFrom (root), "/\\", {});
+        parts.removeString (".");
+        parts.removeEmptyStrings();
+
+        auto* node = &tree;
+        for (const auto& part : parts)
+            node = &node->folders[part];
+        node->shapes.emplace_back (loadBase + i, allFiles[i].getFileNameWithoutExtension());
+    }
+
     juce::PopupMenu menu;
     menu.addSectionHeader ("My shapes");
-    if (userFiles.isEmpty())
+    if (tree.shapes.empty())
         menu.addItem (3, "(none saved yet)", false);
-    for (int i = 0; i < userFiles.size(); ++i)
-        menu.addItem (1000 + i, userFiles[i].getFileNameWithoutExtension());
+    for (const auto& [id, name] : tree.shapes)
+        menu.addItem (id, name);
+
+    if (! tree.folders.empty())
+    {
+        menu.addSeparator();
+        menu.addSectionHeader ("Libraries");
+        for (const auto& [name, child] : tree.folders)
+            menu.addSubMenu (name, child.build());
+    }
 
     menu.addSeparator();
     menu.addSubMenu ("Factory shapes", factory);
@@ -740,14 +785,14 @@ void ShapeModEditor::showShapeMenu()
     {
         juce::PopupMenu del;
         for (int i = 0; i < userFiles.size(); ++i)
-            del.addItem (2000 + i, userFiles[i].getFileNameWithoutExtension());
+            del.addItem (deleteBase + i, userFiles[i].getFileNameWithoutExtension());
         menu.addSubMenu ("Delete saved shape", del);
     }
     menu.addItem (2, "Show shapes folder");
 
     juce::Component::SafePointer<ShapeModEditor> safe (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&shapesButton),
-                        [safe, factoryNames, userFiles] (int r)
+                        [safe, factoryNames, userFiles, allFiles] (int r)
     {
         if (safe == nullptr || r == 0)
             return;
@@ -761,19 +806,20 @@ void ShapeModEditor::showShapeMenu()
             return;
         }
 
-        if (r >= 1000 && r < 1000 + userFiles.size())
+        if (r >= loadBase && r < loadBase + allFiles.size())
         {
+            const auto& file = allFiles.getReference (r - loadBase);
             Shape s;
-            if (ShapeLibrary::load (userFiles[r - 1000], s))
+            if (ShapeLibrary::load (file, s))
                 safe->applyShape (s, true);
             else
-                safe->setStatus ("Couldn't read " + userFiles[r - 1000].getFileName(), true);
+                safe->setStatus ("Couldn't read " + file.getFileName(), true);
             return;
         }
 
-        if (r >= 2000 && r < 2000 + userFiles.size())
+        if (r >= deleteBase && r < deleteBase + userFiles.size())
         {
-            const auto file = userFiles[r - 2000];
+            const auto file = userFiles[r - deleteBase];
             file.moveToTrash();
             safe->setStatus ("Moved \"" + file.getFileNameWithoutExtension() + "\" to the Trash");
         }

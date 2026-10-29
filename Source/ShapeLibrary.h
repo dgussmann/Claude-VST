@@ -19,10 +19,23 @@ namespace ShapeLibrary
         return dir;
     }
 
+    // Shapes saved directly in the folder (your own saves).
     inline juce::Array<juce::File> list()
     {
         auto files = folder().findChildFiles (juce::File::findFiles, false, "*.shape");
         files.sort();
+        return files;
+    }
+
+    // Every shape, including those in subfolders (e.g. imported libraries), sorted by path.
+    inline juce::Array<juce::File> listAll()
+    {
+        auto files = folder().findChildFiles (juce::File::findFiles, true, "*.shape");
+        std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
+        {
+            const auto root = folder();
+            return a.getRelativePathFrom (root).compareNatural (b.getRelativePathFrom (root)) < 0;
+        });
         return files;
     }
 

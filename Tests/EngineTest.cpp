@@ -3,6 +3,7 @@
 // Usage: ShapeModTest "/path/to/ShapeMod FX.vst3"
 
 #include "../Source/PluginProcessor.h"
+#include "../Source/ShapeLibrary.h"
 #include <cmath>
 #include <iostream>
 
@@ -79,6 +80,24 @@ int main (int argc, char** argv)
         check (near (inv.evaluate (0.25f), 0.75), "invert");
         auto steps = Shape::fromSteps ({ 0.1f, 0.9f }, "S");
         check (near (steps.evaluate (0.2f), 0.1) && near (steps.evaluate (0.7f), 0.9), "steps");
+    }
+
+    if (auto dir = juce::SystemStats::getEnvironmentVariable ("SHAPEMOD_SHAPES_DIR", {}); dir.isNotEmpty())
+    {
+        std::cout << "Imported shape files in " << dir << std::endl;
+        int ok = 0, bad = 0;
+        for (const auto& f : juce::File (dir).findChildFiles (juce::File::findFiles, true, "*.shape"))
+        {
+            Shape s;
+            bool good = ShapeLibrary::load (f, s) && s.points.size() >= 2 && s.name.isNotEmpty();
+            for (int i = 0; good && i <= 200; ++i)
+            {
+                const auto v = s.evaluate ((float) i / 201.0f);
+                good = std::isfinite (v) && v >= 0.0f && v <= 1.0f;
+            }
+            if (good) ++ok; else { ++bad; std::cout << "    bad: " << f.getFullPathName() << std::endl; }
+        }
+        check (ok > 0 && bad == 0, juce::String (ok) + " shape files load and evaluate in range");
     }
 
     std::cout << "Rate lengths (4/4)" << std::endl;
