@@ -606,7 +606,11 @@ void ShapeModProcessor::getStateInformation (juce::MemoryBlock& destData)
     if (auto params = apvts.copyState().createXml())
         xml.addChildElement (params.release());
 
-    xml.createNewChildElement ("Shape")->setAttribute ("json", getShape().toJSON());
+    {
+        auto* shapeEl = xml.createNewChildElement ("Shape");
+        shapeEl->setAttribute ("json", getShape().toJSON());
+        shapeEl->setAttribute ("source", shapeSource);
+    }
 
     auto* slotsEl = xml.createNewChildElement ("Slots");
     for (int i = 0; i < numSlots; ++i)
@@ -646,7 +650,10 @@ void ShapeModProcessor::setStateInformation (const void* data, int sizeInBytes)
         apvts.replaceState (juce::ValueTree::fromXml (*params));
 
     if (auto* shapeEl = xml->getChildByName ("Shape"))
+    {
         setShape (Shape::fromJSON (shapeEl->getStringAttribute ("json")));
+        shapeSource = shapeEl->getStringAttribute ("source");
+    }
 
     if (auto* slotsEl = xml->getChildByName ("Slots"))
     {

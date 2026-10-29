@@ -251,6 +251,54 @@ int main (int argc, char** argv)
     const auto v2 = hosted->getParameters()[depthIndex]->getValue();
     check (std::abs (v2 - v1) > 0.001f, "free run moves while the transport is stopped");
 
+    // Previous / next shape arrows step through the loaded shape's folder and wrap round.
+    {
+        std::cout << "Shape stepping" << std::endl;
+        auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ShapeModStepTest");
+        dir.deleteRecursively();
+        dir.createDirectory();
+        for (auto name : { "Alpha", "Bravo", "Charlie" })
+        {
+            auto s = Shape::factory ("Saw Up");
+            s.name = name;
+            dir.getChildFile (juce::String (name) + ".shape").replaceWithText (s.toJSON());
+        }
+
+        ShapeModProcessor p;
+        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        juce::TextButton* next = nullptr;
+        juce::TextButton* prev = nullptr;
+        for (auto* c : ed->getChildren())
+            if (auto* b = dynamic_cast<juce::TextButton*> (c))
+            {
+                if (b->getTooltip() == "Next shape in this folder") next = b;
+                if (b->getTooltip() == "Previous shape in this folder") prev = b;
+            }
+        check (next != nullptr && prev != nullptr, "arrow buttons exist");
+
+        auto current = [&] { return p.getShape().name; };
+        p.setShapeSource ("file:" + dir.getChildFile ("Alpha.shape").getFullPathName());
+        next->onClick(); const auto a = current();
+        next->onClick(); const auto b = current();
+        next->onClick(); const auto c = current();
+        prev->onClick(); const auto d = current();
+        check (a == "Bravo" && b == "Charlie" && c == "Alpha" && d == "Charlie",
+               "next/previous step through the folder and wrap (" + a + ", " + b + ", " + c + ", " + d + ")");
+
+        p.setShapeSource ("factory:Square");
+        next->onClick();
+        const auto names = Shape::factoryNames();
+        check (current() == names[names.indexOf ("Square") + 1], "next works through factory shapes");
+
+        p.setShapeSource ("file:" + dir.getChildFile ("Bravo.shape").getFullPathName());
+        juce::MemoryBlock st; p.getStateInformation (st);
+        ShapeModProcessor q; q.setStateInformation (st.getData(), (int) st.getSize());
+        check (q.getShapeSource() == p.getShapeSource(), "the shape's folder position is saved with the project");
+
+        ed.reset();
+        dir.deleteRecursively();
+    }
+
     // Optional: render the editor to a PNG for a visual check.
     if (argc >= 3)
     {

@@ -90,6 +90,11 @@ public:
     Shape getShape() const;
     void setShape (const Shape&);
 
+    // Where the current shape was loaded from: "file:<path>", "factory:<name>" or empty
+    // (message thread only). Lets the editor step to the next shape in the same folder.
+    juce::String getShapeSource() const { return shapeSource; }
+    void setShapeSource (const juce::String& s) { shapeSource = s; }
+
     // Modulation targets
     Slot& getSlot (int i) noexcept { return slots[(size_t) i]; }
     void assignSlot (int slot, int paramIndex);     // captures a sensible range around the knob's value
@@ -138,6 +143,7 @@ private:
 
     Shape shape;
     juce::SpinLock shapeLock;
+    juce::String shapeSource;
 
     std::array<Slot, numSlots> slots;
 

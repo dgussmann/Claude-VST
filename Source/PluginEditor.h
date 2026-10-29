@@ -77,6 +77,10 @@ private:
     void showShapeMenu();
     void saveShapeAs();
     void applyShape (const Shape&, bool pushUndo);
+    bool loadShapeFromSource (const juce::String& source, bool pushUndo);
+    void stepShape (int direction);
+    void updateShapeLabel (bool force = false);
+    static juce::Array<juce::File> siblingsOf (const juce::File& shapeFile);
     void pushUndo();
     void undo();
 
@@ -91,6 +95,8 @@ private:
     juce::TextButton loadButton { "Load plugin" }, showPluginButton { "Hide plugin" };
     juce::Label hostedLabel, statusLabel;
     juce::TextButton shapesButton { "Shapes" }, saveButton { "Save" }, undoButton { "Undo" };
+    juce::TextButton prevShapeButton, nextShapeButton;
+    juce::String labelSource, labelPosition;
     juce::Label shapeNameLabel;
 
     // Shape

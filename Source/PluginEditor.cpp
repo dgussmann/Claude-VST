@@ -165,6 +165,15 @@ ShapeModEditor::ShapeModEditor (ShapeModProcessor& p)
     saveButton.setTooltip ("Save this shape to your library");
     undoButton.onClick = [this] { undo(); };
     addAndMakeVisible (shapesButton);
+
+    prevShapeButton.setButtonText (juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x80")));   // left triangle
+    nextShapeButton.setButtonText (juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xb6")));   // right triangle
+    prevShapeButton.setTooltip ("Previous shape in this folder");
+    nextShapeButton.setTooltip ("Next shape in this folder");
+    prevShapeButton.onClick = [this] { stepShape (-1); };
+    nextShapeButton.onClick = [this] { stepShape (+1); };
+    addAndMakeVisible (prevShapeButton);
+    addAndMakeVisible (nextShapeButton);
     addAndMakeVisible (saveButton);
     addAndMakeVisible (undoButton);
 
@@ -258,7 +267,7 @@ ShapeModEditor::ShapeModEditor (ShapeModProcessor& p)
     processor.addHostListener (this);
     createHostedEditor();
     updateHostedLabel();
-    shapeNameLabel.setText (processor.getShape().name, juce::dontSendNotification);
+    updateShapeLabel (true);
 
     if (processor.getLastLoadError().isNotEmpty())
         setStatus (processor.getLastLoadError(), true);
@@ -316,6 +325,10 @@ void ShapeModEditor::resized()
     saveButton.setBounds (bar.removeFromRight (60).reduced (0, 2));
     bar.removeFromRight (6);
     shapesButton.setBounds (bar.removeFromRight (80).reduced (0, 2));
+    bar.removeFromRight (6);
+    nextShapeButton.setBounds (bar.removeFromRight (30).reduced (0, 2));
+    bar.removeFromRight (2);
+    prevShapeButton.setBounds (bar.removeFromRight (30).reduced (0, 2));
     bar.removeFromRight (6);
     shapeNameLabel.setBounds (bar.removeFromRight (170));
     hostedLabel.setBounds (bar);
@@ -503,7 +516,11 @@ void ShapeModEditor::timerCallback()
         if (ps != shapeEditor.getShape())
         {
             shapeEditor.setShape (ps);
-            shapeNameLabel.setText (ps.name, juce::dontSendNotification);
+            updateShapeLabel (true);
+        }
+        else
+        {
+            updateShapeLabel();
         }
     }
 
@@ -804,17 +821,14 @@ void ShapeModEditor::showShapeMenu()
 
         if (r >= 100 && r < 100 + factoryNames.size())
         {
-            safe->applyShape (Shape::factory (factoryNames[r - 100]), true);
+            safe->loadShapeFromSource ("factory:" + factoryNames[r - 100], true);
             return;
         }
 
         if (r >= loadBase && r < loadBase + allFiles.size())
         {
             const auto& file = allFiles.getReference (r - loadBase);
-            Shape s;
-            if (ShapeLibrary::load (file, s))
-                safe->applyShape (s, true);
-            else
+            if (! safe->loadShapeFromSource ("file:" + file.getFullPathName(), true))
                 safe->setStatus ("Couldn't read " + file.getFileName(), true);
             return;
         }
@@ -852,6 +866,9 @@ void ShapeModEditor::saveShapeAs()
 
         if (ShapeLibrary::save (shape, name))
         {
+            safe->processor.setShapeSource ("file:" + ShapeLibrary::folder()
+                                                .getChildFile (ShapeLibrary::safeFileName (name) + ".shape")
+                                                .getFullPathName());
             safe->applyShape (shape, false);
             safe->setStatus ("Saved \"" + name + "\"");
         }
@@ -869,7 +886,141 @@ void ShapeModEditor::applyShape (const Shape& s, bool undoable)
 
     shapeEditor.setShape (s);
     processor.setShape (shapeEditor.getShape());
-    shapeNameLabel.setText (s.name, juce::dontSendNotification);
+    updateShapeLabel (true);
+}
+
+juce::Array<juce::File> ShapeModEditor::siblingsOf (const juce::File& shapeFile)
+{
+    const auto dir = shapeFile.getParentDirectory();
+
+    // Your own saves can sit in the current or the old library folder; treat them as one list.
+    if (dir == ShapeLibrary::folder() || dir == ShapeLibrary::legacyFolder())
+        return ShapeLibrary::list();
+
+    auto files = dir.findChildFiles (juce::File::findFiles, false, "*.shape");
+    std::sort (files.begin(), files.end(), [] (const juce::File& x, const juce::File& y)
+    {
+        return x.getFileName().compareNatural (y.getFileName()) < 0;
+    });
+    return files;
+}
+
+bool ShapeModEditor::loadShapeFromSource (const juce::String& source, bool undoable)
+{
+    Shape s;
+
+    if (source.startsWith ("factory:"))
+    {
+        const auto name = source.fromFirstOccurrenceOf (":", false, false);
+        if (! Shape::factoryNames().contains (name))
+            return false;
+        s = Shape::factory (name);
+    }
+    else if (source.startsWith ("file:"))
+    {
+        if (! ShapeLibrary::load (juce::File (source.fromFirstOccurrenceOf (":", false, false)), s))
+            return false;
+    }
+    else
+    {
+        return false;
+    }
+
+    processor.setShapeSource (source);
+    applyShape (s, undoable);
+    return true;
+}
+
+void ShapeModEditor::stepShape (int direction)
+{
+    const auto source = processor.getShapeSource();
+
+    if (source.startsWith ("factory:"))
+    {
+        const auto names = Shape::factoryNames();
+        auto index = names.indexOf (source.fromFirstOccurrenceOf (":", false, false));
+        index = (juce::jmax (0, index) + direction + names.size()) % names.size();
+        loadShapeFromSource ("factory:" + names[index], true);
+        return;
+    }
+
+    if (source.startsWith ("file:"))
+    {
+        const juce::File current (source.fromFirstOccurrenceOf (":", false, false));
+        const auto files = siblingsOf (current);
+        if (files.isEmpty())
+        {
+            setStatus ("That shape's folder is empty or has moved", true);
+            return;
+        }
+
+        // If the current file was renamed or deleted, start from where it would sort.
+        auto index = files.indexOf (current);
+        if (index < 0)
+        {
+            index = 0;
+            while (index < files.size() && files[index].getFileName().compareNatural (current.getFileName()) < 0)
+                ++index;
+            if (direction > 0) --index;
+        }
+
+        // Skip any file that fails to load, but never loop forever.
+        for (int tries = 0; tries < files.size(); ++tries)
+        {
+            index = (index + direction + files.size()) % files.size();
+            if (loadShapeFromSource ("file:" + files[index].getFullPathName(), true))
+                return;
+        }
+
+        setStatus ("Couldn't read any shapes in that folder", true);
+        return;
+    }
+
+    setStatus ("Load a shape from the Shapes menu first, then use the arrows to step through its folder.");
+}
+
+void ShapeModEditor::updateShapeLabel (bool force)
+{
+    const auto source = processor.getShapeSource();
+    const auto name = shapeEditor.getShape().name;
+
+    if (force || source != labelSource)
+    {
+        labelSource = source;
+        labelPosition = {};
+
+        if (source.startsWith ("factory:"))
+        {
+            const auto names = Shape::factoryNames();
+            const auto index = names.indexOf (source.fromFirstOccurrenceOf (":", false, false));
+            if (index >= 0)
+                labelPosition = juce::String (index + 1) + "/" + juce::String (names.size());
+        }
+        else if (source.startsWith ("file:"))
+        {
+            const juce::File file (source.fromFirstOccurrenceOf (":", false, false));
+            const auto files = siblingsOf (file);
+            const auto index = files.indexOf (file);
+            if (index >= 0)
+                labelPosition = juce::String (index + 1) + "/" + juce::String (files.size());
+
+            const auto folderName = file.getParentDirectory().getRelativePathFrom (ShapeLibrary::folder());
+            shapeNameLabel.setTooltip (file.isAChildOf (ShapeLibrary::folder()) && ! folderName.startsWith (".")
+                                           ? folderName : juce::String ("My shapes"));
+        }
+        else
+        {
+            shapeNameLabel.setTooltip ({});
+        }
+
+        const bool canStep = source.isNotEmpty();
+        prevShapeButton.setEnabled (canStep);
+        nextShapeButton.setEnabled (canStep);
+    }
+
+    const auto text = labelPosition.isEmpty() ? name : name + "   " + labelPosition;
+    if (shapeNameLabel.getText() != text)
+        shapeNameLabel.setText (text, juce::dontSendNotification);
 }
 
 void ShapeModEditor::pushUndo()
