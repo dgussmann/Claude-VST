@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
@@ -60,3 +63,13 @@ jobs:
           name: ShapeMod-mac
           path: dist/ShapeMod-mac.zip
           retention-days: 30
+
+      - name: Publish release (download link)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" dist/ShapeMod-mac.zip \
+            --title "ShapeMod build ${{ github.run_number }}" \
+            --notes "Universal (Apple Silicon + Intel) VST3 build of ShapeMod FX and ShapeMod Instrument. Unzip and follow INSTALL.txt." \
+            --latest
