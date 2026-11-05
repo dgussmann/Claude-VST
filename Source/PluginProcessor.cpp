@@ -115,6 +115,15 @@ void WavesieveProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         return;
     }
 
+    // A single NaN or Inf would otherwise stay in the oversampling filters' state for good.
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        auto* d = buffer.getWritePointer (ch);
+        for (int i = 0; i < numSamples; ++i)
+            if (! std::isfinite (d[i]))
+                d[i] = 0.0f;
+    }
+
     const auto* table = audioTable.load (std::memory_order_acquire);
     const int mode = juce::roundToInt (pMode->load());
     const auto phaseMode = (PhaseMode) juce::roundToInt (pPhaseMode->load());

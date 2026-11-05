@@ -314,21 +314,28 @@ static void testNaNRecovery()
     printf ("[NaN recovery]\n");
     for (int mode : { 0, 1 })
     {
-        WavesieveProcessor p;
-        setP (p, p.apvts, "mode", (float) mode);
-        p.prepareToPlay (48000.0, 512);
-        juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer m;
-        buf.clear(); buf.setSample (0, 5, std::numeric_limits<float>::quiet_NaN());
-        p.processBlock (buf, m);
-        double last = -1;
-        for (int b = 0; b < 200; ++b)
+        double results[2];
+        for (int poison : { 0, 1 })
         {
-            for (int i = 0; i < 512; ++i) { const float v = (float) std::sin (i * 0.1); buf.setSample (0, i, v); buf.setSample (1, i, v); }
+            WavesieveProcessor p;
+            setP (p, p.apvts, "mode", (float) mode);
+            p.prepareToPlay (48000.0, 512);
+            juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer m;
+            buf.clear();
+            if (poison) buf.setSample (0, 5, std::numeric_limits<float>::quiet_NaN());
             p.processBlock (buf, m);
-            last = rms (buf.getReadPointer (0), 512);
+            double last = -1, phase = 0;
+            for (int b = 0; b < 200; ++b)
+            {
+                for (int i = 0; i < 512; ++i) { const float v = 0.5f * (float) std::sin (phase); phase += 0.1; buf.setSample (0, i, v); buf.setSample (1, i, v); }
+                p.processBlock (buf, m);
+                last = rms (buf.getReadPointer (0), 512);
+            }
+            results[poison] = last;
         }
-        printf ("  mode %d left channel rms after NaN: %.4f\n", mode, last);
-        CHECK (std::isfinite (last) && last > 1.0e-4, "mode %d did not recover from NaN input", mode);
+        printf ("  mode %d rms clean %.4f, after NaN %.4f\n", mode, results[0], results[1]);
+        CHECK (results[0] > 1.0e-4, "mode %d silent on clean signal", mode);
+        CHECK (std::isfinite (results[1]) && std::abs (results[1] - results[0]) < 0.05 * results[0], "mode %d did not recover from NaN input", mode);
     }
 }
 
