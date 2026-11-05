@@ -661,6 +661,45 @@ static void audit (const juce::File& dir)
     }
 }
 
+// How much of a 60 Hz sine's output ends up above 4 kHz, by input level and overflow mode.
+static void shaperAudit (const juce::File& dir)
+{
+    const double fs = 48000.0;
+    printf ("share of output energy above 4 kHz, 60 Hz sine, Drive 0 dB:\n");
+    for (const auto& it : juce::RangedDirectoryIterator (dir, true, "*.flac"))
+    {
+        printf ("%s\n", it.getFile().getFileName().toRawUTF8());
+        for (int o : { 0, 1, 2 })
+        {
+            printf ("  %-7s", o == 0 ? "Repeat" : o == 1 ? "Hold" : "Mirror");
+            for (float level : { 0.25f, 0.5f, 0.9f, 1.1f, 1.5f, 3.0f })
+            {
+                WavesieveProcessor p; p.loadTableNow (it.getFile());
+                setP (p, p.apvts, "mode", 1); setP (p, p.apvts, "overflow", (float) o);
+                p.prepareToPlay (fs, 512);
+                juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer m;
+                juce::dsp::FFT fft (14);
+                std::vector<float> rec; double ph = 0;
+                for (int b = 0; b < 60; ++b)
+                {
+                    for (int i = 0; i < 512; ++i) { const float v = level * (float) std::sin (ph); ph += juce::MathConstants<double>::twoPi * 60.0 / fs; buf.setSample (0, i, v); buf.setSample (1, i, v); }
+                    p.processBlock (buf, m);
+                    if (b >= 20) rec.insert (rec.end(), buf.getReadPointer (0), buf.getReadPointer (0) + 512);
+                }
+                std::vector<float> a (32768, 0.0f);
+                std::copy_n (rec.begin(), 16384, a.begin());
+                juce::dsp::WindowingFunction<float> w (16384, juce::dsp::WindowingFunction<float>::hann);
+                w.multiplyWithWindowingTable (a.data(), 16384);
+                fft.performFrequencyOnlyForwardTransform (a.data(), true);
+                double hi = 0, all = 1.0e-20;
+                for (int k = 1; k < 8192; ++k) { const double e = a[(size_t) k] * a[(size_t) k]; all += e; if (k * fs / 16384.0 > 4000.0) hi += e; }
+                printf ("  %5.1f:%7.3f%%", level, 100.0 * hi / all);
+            }
+            printf ("\n");
+        }
+    }
+}
+
 class TestApp : public juce::JUCEApplicationBase
 {
 public:
@@ -683,6 +722,7 @@ public:
             if (args[i] == "--vst3") vst3 = args[i + 1];
             if (args[i] == "--snapshot") snap = args[i + 1];
             if (args[i] == "--audit") auditDir = juce::File (args[i + 1]);
+            if (args[i] == "--shaper-audit") { shaperAudit (juce::File (args[i + 1])); fflush (stdout); quit(); return; }
         }
         if (auditDir.isDirectory()) audit (auditDir);
         else if (snap.isNotEmpty()) snapshot (snap, samples);
