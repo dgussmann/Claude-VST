@@ -1,0 +1,54 @@
+name: Build Wavesieve
+
+on:
+  push:
+    branches: [wavesieve]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        run: brew install ninja
+      - name: Cache JUCE download
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-8.0.16-security-${{ runner.os }}-wavesieve-v1
+      - name: Configure (Apple Silicon)
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          -DWAVESIEVE_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --target Wavesieve_VST3 WavesieveTest -j 4
+      - name: Sign for local use (ad-hoc)
+        run: codesign --force --deep --sign - "build/Wavesieve_artefacts/Release/VST3/Wavesieve.vst3"
+      - name: Run engine tests and host the built VST3
+        run: |
+          ./build/WavesieveTest_artefacts/Release/WavesieveTest.app/Contents/MacOS/WavesieveTest --vst3 "build/Wavesieve_artefacts/Release/VST3/Wavesieve.vst3"
+      - name: Validate with pluginval
+        run: |
+          curl -fsSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          ditto -x -k pluginval.zip .
+          ./pluginval.app/Contents/MacOS/pluginval --strictness-level 7 --validate-in-process --skip-gui-tests "build/Wavesieve_artefacts/Release/VST3/Wavesieve.vst3"
+      - name: Check architecture
+        run: lipo -info "build/Wavesieve_artefacts/Release/VST3/Wavesieve.vst3/Contents/MacOS/Wavesieve"
+      - name: Package
+        run: |
+          mkdir -p dist/Wavesieve
+          cp -R "build/Wavesieve_artefacts/Release/VST3/Wavesieve.vst3" dist/Wavesieve/
+          cd dist && ditto -c -k --sequesterRsrc --keepParent Wavesieve Wavesieve-mac.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wavesieve-mac
+          path: dist/Wavesieve-mac.zip
+          retention-days: 30
