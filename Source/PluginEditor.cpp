@@ -205,6 +205,7 @@ void GraphView::paintFilter (juce::Graphics& g, const WaveTable& t, juce::Rectan
     std::vector<float> mag ((size_t) kNumHarmonics);
     computeHarmonicResponse (t, paramValue (proc, "frame"), paramValue (proc, "resonance"), mag.data(), nullptr, nullptr);
     const double cutoff = paramValue (proc, "cutoff");
+    const int top = findTopHarmonic (mag.data());
     const double loHz = 20.0, hiHz = 20000.0;
 
     auto xFor = [&] (double hz) { return area.getX() + area.getWidth() * (float) (std::log (hz / loHz) / std::log (hiHz / loHz)); };
@@ -218,21 +219,20 @@ void GraphView::paintFilter (juce::Graphics& g, const WaveTable& t, juce::Rectan
                     (int) xFor (hz) - 20, (int) area.getBottom() + 1, 40, 12, juce::Justification::centred);
     }
 
+    g.setColour (kLine);
+    g.drawHorizontalLine ((int) (area.getY() + area.getHeight() * 0.25f), area.getX(), area.getRight());  // 0 dB
+    g.setColour (kDim);
+    g.drawText ("0 dB", (int) area.getX() + 2, (int) (area.getY() + area.getHeight() * 0.25f) - 13, 36, 12, juce::Justification::centredLeft);
+
     juce::Path p;
     const int steps = juce::jmax (64, (int) area.getWidth() * 2);
     for (int i = 0; i <= steps; ++i)
     {
         const double hz = loHz * std::pow (hiHz / loHz, (double) i / steps);
-        const double h = juce::jmax (1.0, harmonicForFrequency (hz, cutoff));
-        float m = 0.0f;
-        if (h < 1024.0)
-        {
-            const int a = (int) h;
-            m = mag[(size_t) a] + (float) (h - a) * (mag[(size_t) a + 1] - mag[(size_t) a]);
-        }
-        const float db = juce::jlimit (-72.0f, 0.0f, juce::Decibels::gainToDecibels (m, -72.0f));
+        const float m = readResponse (mag.data(), top, harmonicForFrequency (hz, cutoff));
+        const float db = juce::jlimit (-72.0f, 24.0f, juce::Decibels::gainToDecibels (m, -72.0f));
         const float x = area.getX() + area.getWidth() * (float) i / steps;
-        const float y = area.getY() + area.getHeight() * (-db / 72.0f);
+        const float y = area.getY() + area.getHeight() * ((24.0f - db) / 96.0f);
         if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
     }
     juce::Path fill (p);

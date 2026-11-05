@@ -7,8 +7,23 @@ namespace wavesieve
 {
 enum class PhaseMode { minimum = 0, linear, original, raw };
 
-/** Harmonic response of a frame position: |H| for harmonics 0..1024, peak 1, with resonance applied. */
+/** Harmonic response of a frame position: |H| for harmonics 0..1024, relative to a saw (a saw is flat). Peak is 1 at 0% resonance; positive resonance can exceed it. */
 void computeHarmonicResponse (const WaveTable&, float framePos, float resonance, float* mag, float* re, float* im);
+
+/** The last harmonic with real content. */
+int findTopHarmonic (const float* mag) noexcept;
+
+/** Reads the curve at a fractional harmonic. Below the fundamental it holds the first value. Above the
+    last harmonic, a table with full-range content holds its last value, so it doesn't become a brick wall
+    at low cutoffs; a sparse table (a sine, say) has nothing up there and stays closed. */
+inline float readResponse (const float* mag, int top, double h) noexcept
+{
+    constexpr int fullRange = 512;
+    if (h > (double) top + 1.0 && top < fullRange) return 0.0f;
+    const double c = juce::jlimit (1.0, top >= fullRange ? (double) top : (double) kNumHarmonics - 1.001, h);
+    const int i = juce::jmin ((int) c, kNumHarmonics - 2);
+    return mag[i] + (float) (c - i) * (mag[i + 1] - mag[i]);
+}
 
 /** Maps an audio frequency onto the table. Cutoff is the frequency of harmonic 24. */
 inline double harmonicForFrequency (double hz, double cutoff) noexcept  { return 24.0 * hz / cutoff; }

@@ -11,19 +11,59 @@ void computeHarmonicResponse (const WaveTable& t, float framePos, float resonanc
     const float* sa = t.spectra (a);
     const float* sb = t.spectra (b);
 
+    // A filter table describes its curve relative to a saw, whose harmonics fall as 1/h: a saw is a flat
+    // response, a "lowpass" is a saw with its harmonics above 24 rolled off. So each harmonic's level is
+    // multiplied by its number. Without this every table reads as a steep slope from the fundamental.
     float peak = 1.0e-9f;
-    for (int h = 0; h < kNumHarmonics; ++h)
+    mag[0] = 0.0f;
+    if (re != nullptr) { re[0] = 1.0f; im[0] = 0.0f; }
+    for (int h = 1; h < kNumHarmonics; ++h)
     {
         const float ar = sa[h * 2], ai = sa[h * 2 + 1], br = sb[h * 2], bi = sb[h * 2 + 1];
         const float ma = std::sqrt (ar * ar + ai * ai), mb = std::sqrt (br * br + bi * bi);
-        mag[h] = ma + x * (mb - ma);
-        if (re != nullptr) { re[h] = ar + x * (br - ar); im[h] = ai + x * (bi - ai); }
-        if (h > 0) peak = std::max (peak, mag[h]);
+        mag[h] = (ma + x * (mb - ma)) * (float) h;
+        if (re != nullptr)
+        {
+            // Remove a saw's own phase (+90 degrees, alternating by harmonic) so it comes out neutral.
+            const float sign = (h & 1) != 0 ? -1.0f : 1.0f;
+            const float r = ar + x * (br - ar), q = ai + x * (bi - ai);
+            re[h] = sign * q;
+            im[h] = -sign * r;
+        }
+        peak = std::max (peak, mag[h]);
     }
-    // -100%..+100% resonance raises the normalised response to a power of 1/4..4.
+
+    // Resonance reshapes the normalised response with a power of 1/4..4. On its own that only pulls
+    // everything below the peak down, which sounds like losing level. So the result is scaled back to
+    // the energy it had at 0% (weighted per octave, as ears hear it): turning up now pushes the peaks
+    // above their old level, and turning down lowers them towards a flatter response.
     const float exponent = std::pow (4.0f, juce::jlimit (-1.0f, 1.0f, resonance));
+    float before = 1.0e-12f, after = 1.0e-12f;
     for (int h = 0; h < kNumHarmonics; ++h)
-        mag[h] = std::pow (juce::jmin (1.0f, mag[h] / peak), exponent);
+    {
+        const float m = juce::jmin (1.0f, mag[h] / peak);
+        const float shaped = std::pow (m, exponent);
+        mag[h] = shaped;
+        if (h > 0)
+        {
+            const float weight = 1.0f / (float) h;
+            before += m * m * weight;
+            after += shaped * shaped * weight;
+        }
+    }
+    const float gain = juce::jlimit (0.125f, 15.85f, std::sqrt (before / after));  // at most +24 dB
+    for (int h = 0; h < kNumHarmonics; ++h)
+        mag[h] *= gain;
+}
+
+int findTopHarmonic (const float* mag) noexcept
+{
+    float peak = 0.0f;
+    for (int h = 1; h < kNumHarmonics; ++h) peak = std::max (peak, mag[h]);
+    const float floorLevel = peak * 1.0e-3f;
+    for (int h = kNumHarmonics - 1; h > 1; --h)
+        if (mag[h] > floorLevel) return h;
+    return 1;
 }
 
 void FilterEngine::prepare (double sampleRate, int numChannels)
@@ -136,17 +176,17 @@ void FilterEngine::design (Kernel& out) noexcept
         const bool keepPhase = mode == PhaseMode::original;
         const bool minimum = mode == PhaseMode::minimum;
         const double harmonicsPerBin = harmonicForFrequency (sr / N, cutoff);
+        const int top = findTopHarmonic (mag.data());
 
         for (int k = 0; k <= N / 2; ++k)
         {
             double h = harmonicsPerBin * k;
-            float m = 0.0f, pr = 1.0f, pi = 0.0f;
-            if (h < 1024.0)
+            float m, pr = 1.0f, pi = 0.0f;
+            m = readResponse (mag.data(), top, h);
+            h = juce::jlimit (1.0, (double) top, h);
             {
-                h = std::max (h, 1.0);  // below the fundamental, hold it instead of cutting the bass
-                const int i = (int) h;
+                const int i = juce::jmin ((int) h, kNumHarmonics - 2);
                 const float y = (float) (h - i);
-                m = mag[(size_t) i] + y * (mag[(size_t) i + 1] - mag[(size_t) i]);
                 if (keepPhase)
                 {
                     const float r = re[(size_t) i] + y * (re[(size_t) i + 1] - re[(size_t) i]);

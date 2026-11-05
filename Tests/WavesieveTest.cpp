@@ -1,4 +1,5 @@
 // Headless checks for Wavesieve. Usage: WavesieveTest [--samples DIR] [--vst3 PATH] [--snapshot PREFIX]
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../Source/PluginProcessor.h"
 #include "../Source/PluginEditor.h"
@@ -220,7 +221,7 @@ static void testPartitionAlignment()
     flat.samples.assign (kFrameSize, 0.0f);
     flat.samples[0] = 1.0f;
     flat.spectrum.assign (kNumHarmonics * 2, 0.0f);
-    for (int h = 0; h < kNumHarmonics; ++h) flat.spectrum[(size_t) h * 2] = 1.0f;
+    for (int h = 1; h < kNumHarmonics; ++h) flat.spectrum[(size_t) h * 2] = 1.0f / (float) h;
 
     FilterEngine e; e.prepare (48000.0, 1);
     e.setParameters (&flat, 0, 20000.0f, 0, PhaseMode::linear);
@@ -376,6 +377,97 @@ static void testNaNRecovery()
     }
 }
 
+// Harmonics that follow 1/h with an optional rolloff above harmonic 24, in the layout of a real saw table.
+static void writeSawTable (const juce::File& f, bool lowpass)
+{
+    juce::FileOutputStream o (f);
+    o.write ("vawt", 4); o.writeInt (2048); o.writeShort (1); o.writeShort (0);
+    for (int i = 0; i < 2048; ++i)
+    {
+        double v = 0;
+        for (int h = 1; h < 1000; ++h)
+        {
+            const double roll = lowpass && h > 24 ? std::pow (24.0 / h, 2.0) : 1.0;
+            v += ((h & 1) != 0 ? 1.0 : -1.0) * roll / h * std::sin (juce::MathConstants<double>::twoPi * h * i / 2048.0);
+        }
+        o.writeFloat ((float) v);
+    }
+    o.flush();
+}
+
+static void testSawReference()
+{
+    printf ("[saw is a flat filter; lowpass table filters at the cutoff]\n");
+    const auto f = juce::File::createTempFile ("saw.wt"); f.deleteFile();
+    writeSawTable (f, false);
+    for (int mode : { 0, 1, 2 })
+    {
+        WavesieveProcessor p; p.loadTableNow (f);
+        setP (p, p.apvts, "phaseMode", (float) mode);
+        const double a = gainAt (p, 150.0, 48000.0), b = gainAt (p, 1000.0, 48000.0), c = gainAt (p, 6000.0, 48000.0);
+        setP (p, p.apvts, "cutoff", 100.0f);
+        const double d = gainAt (p, 12000.0, 48000.0);
+        printf ("  saw, phase mode %d: 150 Hz %.3f, 1 kHz %.3f, 6 kHz %.3f, 12 kHz at 100 Hz cutoff %.3f\n", mode, a, b, c, d);
+        CHECK (a > 0.8 && a < 1.2 && b > 0.8 && b < 1.2 && c > 0.8 && c < 1.2 && d > 0.8 && d < 1.2, "saw not flat in mode %d", mode);
+    }
+    // In Original mode a saw must also keep the signal's shape: an impulse stays one clean impulse.
+    {
+        FilterEngine e; e.prepare (48000.0, 1);
+        WavesieveProcessor p; p.loadTableNow (f);
+        const auto t = p.getCurrentTable();
+        e.setParameters (t.get(), 0, 1000.0f, 0, PhaseMode::original);
+        juce::AudioBuffer<float> buf (1, 8192); buf.clear(); buf.setSample (0, 0, 1.0f);
+        e.process (buf);
+        int at = 0; float peak = 0;
+        for (int i = 0; i < 8192; ++i) if (std::abs (buf.getSample (0, i)) > peak) { peak = std::abs (buf.getSample (0, i)); at = i; }
+        printf ("  saw, original phase: impulse peak %.3f at %d\n", buf.getSample (0, at), at);
+        CHECK (at == e.latencySamples (PhaseMode::original) && buf.getSample (0, at) > 0.5f, "original phase not neutral");
+    }
+    f.deleteFile();
+    writeSawTable (f, true);
+    {
+        WavesieveProcessor p; p.loadTableNow (f);
+        const double low = gainAt (p, 200.0, 48000.0), high = gainAt (p, 8000.0, 48000.0);
+        printf ("  lowpass table, cutoff 1 kHz: 200 Hz %.3f, 8 kHz %.4f\n", low, high);
+        CHECK (low > 0.8 && high < 0.05, "lowpass did not filter");
+        // Moving the cutoff on a running instance must move the corner.
+        setP (p, p.apvts, "cutoff", 16000.0f);
+        CHECK (gainAt (p, 8000.0, 48000.0) > 0.8, "raising the cutoff did not open the filter");
+    }
+    f.deleteFile();
+}
+
+static void testResonance()
+{
+    printf ("[resonance]\n");
+    // Strong peak at harmonic 24 over a quieter bed of harmonics.
+    const auto f = juce::File::createTempFile ("res.wt"); f.deleteFile();
+    {
+        juce::FileOutputStream o (f);
+        o.write ("vawt", 4); o.writeInt (2048); o.writeShort (1); o.writeShort (0);
+        for (int i = 0; i < 2048; ++i)
+        {
+            double v = (1.0 / 24.0) * std::sin (juce::MathConstants<double>::twoPi * 24 * i / 2048.0);
+            for (int h = 1; h < 200; ++h)
+                if (h != 24) v += (0.15 / h) * std::sin (juce::MathConstants<double>::twoPi * h * i / 2048.0 + h * 1.7);
+            o.writeFloat ((float) v);
+        }
+        o.flush();
+    }
+    double last = 0;
+    for (float r : { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f })
+    {
+        WavesieveProcessor p; p.loadTableNow (f);
+        setP (p, p.apvts, "resonance", r);
+        setP (p, p.apvts, "phaseMode", 1.0f);
+        const double peak = gainAt (p, 1000.0, 48000.0), bed = gainAt (p, 1041.7 * 3.2, 48000.0);
+        printf ("  resonance %+.1f: peak %.3f, between peaks %.4f\n", r, peak, bed);
+        CHECK (peak > last, "peak must rise with resonance: %f after %f", peak, last);
+        last = peak;
+    }
+    f.deleteFile();
+}
+
 static void testState (const juce::File& samples)
 {
     printf ("[state]\n");
@@ -451,6 +543,72 @@ static void snapshot (const juce::String& prefix, const juce::File& samples)
     shoot ("shaper");
 }
 
+// Plays noise through a running instance and prints octave-band gains while settings change live.
+static void audit (const juce::File& dir)
+{
+    juce::Array<juce::File> files;
+    for (const auto& it : juce::RangedDirectoryIterator (dir, true, "*.wav;*.flac;*.vitaltable"))
+        files.add (it.getFile());
+    files.sort();
+    WavesieveProcessor p;
+    const double fs = 48000.0;
+    p.prepareToPlay (fs, 512);
+    juce::Random rng (11);
+    juce::dsp::FFT fft (14);
+    const int N = 16384;
+    juce::dsp::WindowingFunction<float> win ((size_t) N, juce::dsp::WindowingFunction<float>::hann);
+    juce::MidiBuffer m;
+
+    auto measure = [&] (const juce::String& label)
+    {
+        juce::AudioBuffer<float> buf (2, 512);
+        std::vector<float> in, out;
+        for (int b = 0; b < 60; ++b)
+        {
+            std::vector<float> dry (512);
+            for (int i = 0; i < 512; ++i) { dry[(size_t) i] = 0.25f * (rng.nextFloat() * 2 - 1); buf.setSample (0, i, dry[(size_t) i]); buf.setSample (1, i, dry[(size_t) i]); }
+            p.processBlock (buf, m);
+            if (b >= 20) { in.insert (in.end(), dry.begin(), dry.end()); out.insert (out.end(), buf.getReadPointer (0), buf.getReadPointer (0) + 512); }
+        }
+        const double edges[] = { 40, 80, 160, 320, 640, 1280, 2560, 5120, 10240, 20480 };
+        double bandIn[9] = {}, bandOut[9] = {};
+        for (int seg = 0; seg + N <= (int) in.size(); seg += N / 2)
+        {
+            std::vector<float> a ((size_t) N * 2, 0.0f), c ((size_t) N * 2, 0.0f);
+            std::copy_n (in.begin() + seg, N, a.begin()); std::copy_n (out.begin() + seg, N, c.begin());
+            win.multiplyWithWindowingTable (a.data(), (size_t) N); win.multiplyWithWindowingTable (c.data(), (size_t) N);
+            fft.performFrequencyOnlyForwardTransform (a.data(), true); fft.performFrequencyOnlyForwardTransform (c.data(), true);
+            for (int k = 1; k < N / 2; ++k)
+            {
+                const double hz = k * fs / N;
+                for (int e = 0; e < 9; ++e)
+                    if (hz >= edges[e] && hz < edges[e + 1]) { bandIn[e] += a[(size_t) k] * a[(size_t) k]; bandOut[e] += c[(size_t) k] * c[(size_t) k]; }
+            }
+        }
+        juce::String row;
+        for (int e = 0; e < 9; ++e)
+            row << juce::String (juce::roundToInt (10.0 * std::log10 ((bandOut[e] + 1.0e-12) / (bandIn[e] + 1.0e-12)))).paddedLeft (' ', 5);
+        printf ("  %-30s%s\n", label.toRawUTF8(), row.toRawUTF8());
+    };
+
+    printf ("band gain dB by octave:          60  120  240  480   1k   2k   4k   8k  15k\n");
+    const int count = files.size();
+    for (int i = 0; i < 8 && count > 0; ++i)
+    {
+        const auto f = files[i * count / 8];
+        p.loadTableAsync (f);
+        for (int w = 0; w < 200 && p.getCurrentTable()->file != f; ++w) juce::Thread::sleep (10);
+        CHECK (p.getCurrentTable()->file == f, "async load never arrived: %s %s", f.getFileName().toRawUTF8(), p.getTableError().toRawUTF8());
+        printf ("%s (%d frames)\n", f.getFileName().toRawUTF8(), p.getCurrentTable()->numFrames);
+        for (float cut : { 200.0f, 1000.0f })
+            for (float fr : { 0.0f, 0.5f, 1.0f })
+            {
+                setP (p, p.apvts, "cutoff", cut); setP (p, p.apvts, "frame", fr);
+                measure ("cut " + juce::String ((int) cut) + " frame " + juce::String (fr, 1));
+            }
+    }
+}
+
 class TestApp : public juce::JUCEApplicationBase
 {
 public:
@@ -466,14 +624,16 @@ public:
     void initialise (const juce::String&) override
     {
         const auto args = getCommandLineParameterArray();
-        juce::File samples; juce::String vst3, snap;
+        juce::File samples, auditDir; juce::String vst3, snap;
         for (int i = 0; i + 1 < args.size(); i += 2)
         {
             if (args[i] == "--samples") samples = juce::File (args[i + 1]);
             if (args[i] == "--vst3") vst3 = args[i + 1];
             if (args[i] == "--snapshot") snap = args[i + 1];
+            if (args[i] == "--audit") auditDir = juce::File (args[i + 1]);
         }
-        if (snap.isNotEmpty()) snapshot (snap, samples);
+        if (auditDir.isDirectory()) audit (auditDir);
+        else if (snap.isNotEmpty()) snapshot (snap, samples);
         else
         {
             testFormats();
@@ -482,6 +642,8 @@ public:
             testPartitionAlignment();
             testShaper();
             testNaNRecovery();
+            testSawReference();
+            testResonance();
             testStress();
             testState (samples);
             if (samples.isDirectory()) testLoading (samples);

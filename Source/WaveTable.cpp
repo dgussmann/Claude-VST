@@ -367,9 +367,9 @@ WaveTablePtr makeInitTable()
         const double f1 = 4.0 + 28.0 * morph, f2 = 16.0 + 120.0 * morph * morph;
         for (int h = 1; h <= 512; ++h)
         {
-            const double a = std::exp (-std::pow ((h - f1) / (1.5 + 0.2 * f1), 2.0))
-                           + 0.6 * std::exp (-std::pow ((h - f2) / (3.0 + 0.2 * f2), 2.0))
-                           + 0.02 / h;
+            const double a = (std::exp (-std::pow ((h - f1) / (1.5 + 0.2 * f1), 2.0))
+                               + 0.6 * std::exp (-std::pow ((h - f2) / (3.0 + 0.2 * f2), 2.0))
+                               + 0.02) / h;  // filter curves are written relative to a saw
             if (a < 1.0e-5) continue;
             for (int i = 0; i < kFrameSize; ++i)
                 frames[(size_t) f][(size_t) i] += (float) (a * std::sin (juce::MathConstants<double>::twoPi * h * i / kFrameSize));

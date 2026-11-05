@@ -35,7 +35,6 @@ public:
     wavesieve::WaveTablePtr getCurrentTable() const;
     juce::String getTableError() const;
     int getCurrentLatency() const noexcept { return lastLatency.load(); }
-    void waitForLoads() { loader.removeAllJobs (false, 10000); }
 
     juce::AudioProcessorValueTreeState apvts;
 
