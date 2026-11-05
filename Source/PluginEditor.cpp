@@ -333,7 +333,7 @@ WavesieveEditor::WavesieveEditor (WavesieveProcessor& p)
     };
     openButton.onClick = [this]
     {
-        chooser = std::make_unique<juce::FileChooser> ("Open a wavetable", juce::File(), "*.wav;*.wt;*.vitaltable;*.vital");
+        chooser = std::make_unique<juce::FileChooser> ("Open a wavetable", juce::File(), "*.wav;*.flac;*.wt;*.vitaltable;*.vital");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                               [this] (const juce::FileChooser& c)
                               {

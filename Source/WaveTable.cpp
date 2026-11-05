@@ -105,13 +105,15 @@ WavChunks scanWavChunks (const juce::File& file)
     return r;
 }
 
-WaveTablePtr loadWav (const juce::File& file, juce::String& error)
+WaveTablePtr loadAudio (const juce::File& file, juce::String& error)
 {
     juce::WavAudioFormat wav;
-    std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (file.createInputStream().release(), true));
-    if (reader == nullptr) { error = "not a readable WAV"; return nullptr; }
+    juce::FlacAudioFormat flac;
+    juce::AudioFormat& format = file.hasFileExtension (".flac") ? static_cast<juce::AudioFormat&> (flac) : wav;
+    std::unique_ptr<juce::AudioFormatReader> reader (format.createReaderFor (file.createInputStream().release(), true));
+    if (reader == nullptr) { error = "not a readable audio file"; return nullptr; }
     const auto len = (int) std::min<juce::int64> (reader->lengthInSamples, 16 * 1024 * 1024);
-    if (len < 16) { error = "WAV too short"; return nullptr; }
+    if (len < 16) { error = "audio file too short"; return nullptr; }
 
     juce::AudioBuffer<float> buf (1, len);
     reader->read (&buf, 0, len, 0, true, false);
@@ -338,7 +340,7 @@ WaveTablePtr loadVitalJson (const juce::File& file, juce::String& error)
 
 bool isWaveTableExtension (const juce::File& file)
 {
-    return file.hasFileExtension (".wav;.wt;.vitaltable;.vital");
+    return file.hasFileExtension (".wav;.flac;.wt;.vitaltable;.vital");
 }
 
 int readWavFrameSizeHint (const juce::File& file)  { return scanWavChunks (file).cycle; }
@@ -347,7 +349,7 @@ WaveTablePtr loadWaveTable (const juce::File& file, juce::String& error)
 {
     error.clear();
     if (! file.existsAsFile()) { error = "file not found"; return nullptr; }
-    if (file.hasFileExtension (".wav"))                 return loadWav (file, error);
+    if (file.hasFileExtension (".wav;.flac"))           return loadAudio (file, error);
     if (file.hasFileExtension (".wt"))                  return loadWt (file, error);
     if (file.hasFileExtension (".vitaltable;.vital"))   return loadVitalJson (file, error);
     error = "unsupported file type";

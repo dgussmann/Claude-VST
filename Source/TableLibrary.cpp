@@ -59,6 +59,7 @@ std::vector<TableLibrary::Root> TableLibrary::defaultRoots()
         { lib.getChildFile ("Audio/Presets/Xfer Records/Serum Presets/Tables"),    "Serum",   true },
         { docs.getChildFile ("Xfer/Serum Presets/Tables"),                         "Serum",   true },
         { music.getChildFile ("Vital"),                                            "Vital",   false },
+        { lib.getChildFile ("Application Support/Kilohearts/dependencies/factory_wavetables"), "Kilohearts", true },
         { music.getChildFile ("Wavetable Morpher"),                                "Wavetable Morpher", true },
         { docs.getChildFile ("Surge XT/Wavetables"),                               "Surge XT", true },
         { lib.getChildFile ("Application Support/Surge XT/wavetables"),            "Surge XT", true },
@@ -74,10 +75,12 @@ std::vector<TableEntry> TableLibrary::scan (const std::vector<Root>& roots, juce
     {
         if (! root.dir.isDirectory()) continue;
 
-        for (const auto& it : juce::RangedDirectoryIterator (root.dir, true, "*.wav;*.wt;*.vitaltable", juce::File::findFiles, juce::File::FollowSymlinks::noCycles))
+        for (const auto& it : juce::RangedDirectoryIterator (root.dir, true, "*.wav;*.flac;*.wt;*.vitaltable", juce::File::findFiles, juce::File::FollowSymlinks::noCycles))
         {
             if (thread != nullptr && thread->threadShouldExit()) return out;
             const auto f = it.getFile();
+
+            if (f.hasFileExtension (".flac") && ! root.allWavs) continue;
 
             if (f.hasFileExtension (".wav") && ! root.allWavs)
             {
@@ -94,8 +97,10 @@ std::vector<TableEntry> TableLibrary::scan (const std::vector<Root>& roots, juce
             e.file = f;
             e.name = f.getFileNameWithoutExtension();
             e.source = root.source;
-            const auto rel = f.getRelativePathFrom (root.dir);
-            e.folder = rel.containsChar (juce::File::getSeparatorChar()) ? rel.upToFirstOccurrenceOf (juce::File::getSeparatorString(), false, false) : juce::String();
+            // The folders under the root, e.g. "Waveshaping / Folding", shown in the list and searchable.
+            const auto parent = f.getParentDirectory();
+            e.folder = parent == root.dir ? juce::String()
+                                          : parent.getRelativePathFrom (root.dir).replace (juce::File::getSeparatorString(), " / ");
             out.push_back (std::move (e));
         }
     }

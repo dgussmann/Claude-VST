@@ -24,7 +24,7 @@ struct WaveTable
 
 using WaveTablePtr = std::shared_ptr<const WaveTable>;
 
-/** Loads Serum/Vital/generic .wav, Surge .wt, .vitaltable and .vital (first non-Init table). */
+/** Loads Serum/Vital/generic .wav, Kilohearts .flac, Surge .wt, .vitaltable and .vital (first non-Init table). */
 WaveTablePtr loadWaveTable (const juce::File& file, juce::String& error);
 
 /** Built-in table used until a file is chosen: a formant sweep, so the plugin is never silent. */

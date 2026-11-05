@@ -50,7 +50,7 @@ static void testLoading (const juce::File& dir)
     std::map<juce::String, std::pair<int,int>> counts;
     juce::StringArray failed;
     double slowest = 0;
-    for (const auto& it : juce::RangedDirectoryIterator (dir, true, "*.wav;*.wt;*.vitaltable;*.vital"))
+    for (const auto& it : juce::RangedDirectoryIterator (dir, true, "*.wav;*.flac;*.wt;*.vitaltable;*.vital"))
     {
         juce::String error;
         const auto start = juce::Time::getMillisecondCounterHiRes();
@@ -69,7 +69,27 @@ static void testLoading (const juce::File& dir)
     for (int i = 0; i < juce::jmin (15, failed.size()); ++i) printf ("  - %s\n", failed[i].toRawUTF8());
     failures += failed.size();
 
-    const auto entries = TableLibrary::scan ({ { dir, "Test", false } });
+    // A table written as a transfer curve must pass quiet signal almost unchanged at its first frame.
+    for (const auto& it : juce::RangedDirectoryIterator (dir, true, "Simple Sym.flac"))
+    {
+        WavesieveProcessor p;
+        CHECK (p.loadTableNow (it.getFile()), "load curve table");
+        setP (p, p.apvts, "mode", 1);
+        p.prepareToPlay (48000.0, 512);
+        juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer m;
+        double in = 0, out = 0, phase = 0;
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int i = 0; i < 512; ++i) { const float v = 0.1f * (float) std::sin (phase); phase += 0.05; buf.setSample (0, i, v); buf.setSample (1, i, v); if (b > 20) in += (double) v * v; }
+            p.processBlock (buf, m);
+            if (b > 20) for (int i = 0; i < 512; ++i) out += (double) buf.getSample (0, i) * buf.getSample (0, i);
+        }
+        const double ratio = std::sqrt (out / in);
+        printf ("  curve table small-signal gain %.3f\n", ratio);
+        CHECK (ratio > 0.5 && ratio < 2.0, "curve mapping gain %f", ratio);
+    }
+
+    const auto entries = TableLibrary::scan ({ { dir, "Test", true } });
     printf ("  library scan lists %d tables\n", (int) entries.size());
 }
 
@@ -92,6 +112,23 @@ static void testFormats()
             auto m = [&] (int fr, int h) { auto* s = t->spectra (fr); return std::hypot (s[h * 2], s[h * 2 + 1]); };
             CHECK (m (0, 1) > 0.95 && m (1, 2) > 0.95 && m (0, 2) < 0.05, ".wt harmonics wrong: %f %f %f", m (0,1), m (1,2), m (0,2));
         }
+    }
+    // .flac with no metadata: 3 frames of 2048 samples
+    {
+        const auto f = dir.getChildFile ("c.flac");
+        {
+            juce::FlacAudioFormat flac;
+            std::unique_ptr<juce::AudioFormatWriter> w (flac.createWriterFor (new juce::FileOutputStream (f), 44100.0, 1, 24, {}, 0));
+            CHECK (w != nullptr, "flac writer");
+            juce::AudioBuffer<float> b (1, 2048 * 3);
+            for (int fr = 0; fr < 3; ++fr)
+                for (int i = 0; i < 2048; ++i)
+                    b.setSample (0, fr * 2048 + i, (float) std::sin (juce::MathConstants<double>::twoPi * (fr + 1) * i / 2048.0));
+            if (w != nullptr) w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+        juce::String e; const auto t = loadWaveTable (f, e);
+        CHECK (t != nullptr && t->numFrames == 3, "flac parse: %s", e.toRawUTF8());
+        if (t != nullptr) { auto* s2 = t->spectra (2); CHECK (std::hypot (s2[6], s2[7]) > 0.95, "flac harmonic 3 missing"); }
     }
     // .vitaltable with a Wave Source
     {
