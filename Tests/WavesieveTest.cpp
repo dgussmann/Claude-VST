@@ -454,6 +454,26 @@ static void testResonance()
         }
         o.flush();
     }
+    // A lowpass must get a bump at its knee, not close: the highs may not fall much further.
+    {
+        const auto lp = juce::File::createTempFile ("lp.wt"); lp.deleteFile();
+        writeSawTable (lp, true);
+        double knee[2], highs[2], lows[2];
+        int idx = 0;
+        for (float r : { 0.0f, 1.0f })
+        {
+            WavesieveProcessor p; p.loadTableNow (lp);
+            setP (p, p.apvts, "resonance", r);
+            knee[idx] = gainAt (p, 1000.0, 48000.0); highs[idx] = gainAt (p, 4000.0, 48000.0); lows[idx] = gainAt (p, 150.0, 48000.0);
+            printf ("  lowpass, resonance %+.0f: 150 Hz %.3f, 1 kHz %.3f, 4 kHz %.3f\n", r, lows[idx], knee[idx], highs[idx]);
+            ++idx;
+        }
+        CHECK (knee[1] > knee[0] * 1.2, "resonance did not raise the knee");
+        CHECK (highs[1] > highs[0] * 0.5, "resonance closed the filter");
+        CHECK (lows[1] > lows[0] * 0.7, "resonance cut the lows");
+        lp.deleteFile();
+    }
+
     double last = 0;
     for (float r : { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f })
     {
@@ -462,8 +482,9 @@ static void testResonance()
         setP (p, p.apvts, "phaseMode", 1.0f);
         const double peak = gainAt (p, 1000.0, 48000.0), bed = gainAt (p, 1041.7 * 3.2, 48000.0);
         printf ("  resonance %+.1f: peak %.3f, between peaks %.4f\n", r, peak, bed);
-        CHECK (peak > last, "peak must rise with resonance: %f after %f", peak, last);
-        last = peak;
+        const double prominence = peak / juce::jmax (bed, 1.0e-6);
+        CHECK (prominence > last * 0.98, "peak must stand out more with resonance: %f after %f", prominence, last);
+        last = prominence;
     }
     f.deleteFile();
 }
@@ -512,6 +533,34 @@ static void testVst3 (const juce::String& path)
     }
     printf ("  params=%d, avg rms %.4f\n", (int) inst->getParameters().size(), out / 100);
     CHECK (out > 0.0, "hosted plugin silent");
+
+    // Through the real VST3: switch Shaper to Filter on the running plugin, then the cutoff must move the curve.
+    auto setByName = [&] (const char* name, float normalised)
+    {
+        for (auto* param : inst->getParameters())
+            if (param->getName (64) == name) { param->setValueNotifyingHost (normalised); return; }
+        CHECK (false, "no parameter %s", name);
+    };
+    auto hostedGain = [&] (double hz)
+    {
+        double phase = 0, sum = 0;
+        for (int b = 0; b < 80; ++b)
+        {
+            for (int i = 0; i < 512; ++i) { const float v = 0.25f * (float) std::sin (phase); phase += juce::MathConstants<double>::twoPi * hz / 48000.0; buf.setSample (0, i, v); buf.setSample (1, i, v); }
+            inst->processBlock (buf, m);
+            if (b >= 40) sum += std::pow (rms (buf.getReadPointer (0), 512), 2.0);
+        }
+        return std::sqrt (sum / 40.0) / (0.25 / std::sqrt (2.0));
+    };
+    setByName ("Mode", 1.0f);
+    hostedGain (1000.0);
+    setByName ("Mode", 0.0f);
+    setByName ("Cutoff", 0.05f);
+    const double closed = hostedGain (5000.0);
+    setByName ("Cutoff", 1.0f);
+    const double open = hostedGain (5000.0);
+    printf ("  hosted filter at 5 kHz: low cutoff %.4f, high cutoff %.4f\n", closed, open);
+    CHECK (open > closed * 3.0, "hosted filter did not respond to Cutoff");
     std::unique_ptr<juce::AudioProcessorEditor> ed (inst->createEditorIfNeeded());
     CHECK (ed != nullptr, "no editor");
     ed.reset();
@@ -524,7 +573,9 @@ static void snapshot (const juce::String& prefix, const juce::File& samples)
     WavesieveProcessor p;
     if (samples.isDirectory())
         for (const auto& it : juce::RangedDirectoryIterator (samples, true, "Monster 4.vitaltable")) { p.loadTableNow (it.getFile()); break; }
-    setP (p, p.apvts, "frame", 0.45f);
+    if (samples.isDirectory() && p.getCurrentTable()->file == juce::File())
+        for (const auto& it : juce::RangedDirectoryIterator (samples, true, "*.flac")) { p.loadTableNow (it.getFile()); break; }
+    setP (p, p.apvts, "frame", p.getCurrentTable()->file.hasFileExtension (".flac") ? 0.0f : 0.45f);
     auto shoot = [&] (const juce::String& name)
     {
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
@@ -600,11 +651,12 @@ static void audit (const juce::File& dir)
         for (int w = 0; w < 200 && p.getCurrentTable()->file != f; ++w) juce::Thread::sleep (10);
         CHECK (p.getCurrentTable()->file == f, "async load never arrived: %s %s", f.getFileName().toRawUTF8(), p.getTableError().toRawUTF8());
         printf ("%s (%d frames)\n", f.getFileName().toRawUTF8(), p.getCurrentTable()->numFrames);
-        for (float cut : { 200.0f, 1000.0f })
-            for (float fr : { 0.0f, 0.5f, 1.0f })
+        setP (p, p.apvts, "cutoff", 1000.0f);
+        for (float fr : { 0.0f, 0.5f, 1.0f })
+            for (float res : { -1.0f, 0.0f, 0.5f, 1.0f })
             {
-                setP (p, p.apvts, "cutoff", cut); setP (p, p.apvts, "frame", fr);
-                measure ("cut " + juce::String ((int) cut) + " frame " + juce::String (fr, 1));
+                setP (p, p.apvts, "frame", fr); setP (p, p.apvts, "resonance", res);
+                measure ("frame " + juce::String (fr, 1) + " res " + juce::String (res, 1));
             }
     }
 }

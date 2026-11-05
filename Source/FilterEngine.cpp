@@ -33,27 +33,46 @@ void computeHarmonicResponse (const WaveTable& t, float framePos, float resonanc
         peak = std::max (peak, mag[h]);
     }
 
-    // Resonance reshapes the normalised response with a power of 1/4..4. On its own that only pulls
-    // everything below the peak down, which sounds like losing level. So the result is scaled back to
-    // the energy it had at 0% (weighted per octave, as ears hear it): turning up now pushes the peaks
-    // above their old level, and turning down lowers them towards a flatter response.
-    const float exponent = std::pow (4.0f, juce::jlimit (-1.0f, 1.0f, resonance));
-    float before = 1.0e-12f, after = 1.0e-12f;
-    for (int h = 0; h < kNumHarmonics; ++h)
+    for (int h = 1; h < kNumHarmonics; ++h)
+        mag[h] /= peak;
+
+    // Resonance changes how far the curve stands out from its own local trend, measured over about an
+    // octave: positive raises peaks and the knee of a lowpass and deepens notches, negative smooths them.
+    // The overall tilt stays put, so turning it up never just closes the filter.
+    const float amount = juce::jlimit (-1.0f, 1.0f, resonance);
+    if (amount == 0.0f) return;
+    const float contrast = std::pow (4.0f, amount) - 1.0f;
+
+    float logs[kNumHarmonics], shaped[kNumHarmonics];
+    double sums[kNumHarmonics + 1];
+    sums[0] = sums[1] = 0.0;
+    for (int h = 1; h < kNumHarmonics; ++h)
     {
-        const float m = juce::jmin (1.0f, mag[h] / peak);
-        const float shaped = std::pow (m, exponent);
-        mag[h] = shaped;
-        if (h > 0)
-        {
-            const float weight = 1.0f / (float) h;
-            before += m * m * weight;
-            after += shaped * shaped * weight;
-        }
+        logs[h] = 20.0f * std::log10 (std::max (mag[h], 1.0e-5f));
+        sums[h + 1] = sums[h] + (double) mag[h];
     }
-    const float gain = juce::jlimit (0.125f, 15.85f, std::sqrt (before / after));  // at most +24 dB
-    for (int h = 0; h < kNumHarmonics; ++h)
-        mag[h] *= gain;
+    constexpr float halfOctave = 1.41421356f;
+    constexpr float maxDeviation = 12.0f, maxBoost = 12.0f;
+    float energyBefore = 1.0e-12f, energyAfter = 1.0e-12f;
+    for (int h = 1; h < kNumHarmonics; ++h)
+    {
+        const float weight = 1.0f / (float) h;  // per octave, roughly as ears hear level
+        energyBefore += mag[h] * mag[h] * weight;
+
+        const int lo = juce::jmax (1, juce::jmin (h - 1, (int) ((float) h / halfOctave)));
+        const int hi = juce::jmin (kNumHarmonics - 1, juce::jmax (h + 1, (int) ((float) h * halfOctave)));
+        // Averaged as amplitude, not dB: narrow notches then barely pull the trend down, so the curve around
+        // them isn't mistaken for peaks and the overall level holds.
+        const auto mean = (float) ((sums[hi + 1] - sums[lo]) / (double) (hi - lo + 1));
+        const float trend = 20.0f * std::log10 (std::max (mean, 1.0e-5f));
+        const float deviation = juce::jlimit (-maxDeviation, maxDeviation, logs[h] - trend);
+        shaped[h] = std::pow (10.0f, juce::jmin (maxBoost, logs[h] + contrast * deviation) / 20.0f);
+        energyAfter += shaped[h] * shaped[h] * weight;
+    }
+    // Pull the level back if the curve gained energy overall, so a comb can't jump in volume.
+    const float gain = juce::jmin (1.0f, std::sqrt (energyBefore / energyAfter));
+    for (int h = 1; h < kNumHarmonics; ++h)
+        mag[h] = shaped[h] * gain;
 }
 
 int findTopHarmonic (const float* mag) noexcept

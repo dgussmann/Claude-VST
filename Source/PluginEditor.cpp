@@ -235,6 +235,23 @@ void GraphView::paintFilter (juce::Graphics& g, const WaveTable& t, juce::Rectan
         const float y = area.getY() + area.getHeight() * ((24.0f - db) / 96.0f);
         if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
     }
+    // A saw-like frame is a flat curve by definition, so say so rather than seem broken.
+    double sum = 0.0, squares = 0.0;
+    for (int h = 1; h <= top; ++h)
+    {
+        const double db = juce::Decibels::gainToDecibels ((double) mag[(size_t) h], -72.0);
+        sum += db;
+        squares += db * db;
+    }
+    const double variance = squares / top - (sum / top) * (sum / top);
+    if (top >= 64 && variance < 9.0)
+    {
+        g.setColour (kAccent);
+        g.setFont (uiFont (12.0f));
+        g.drawFittedText ("This frame is nearly flat, so it barely filters.\nTry another frame, or search \"Filters\" in the browser.",
+                          area.reduced (6.0f, 0.0f).withTrimmedTop (area.getHeight() * 0.56f).withHeight (34.0f).toNearestInt(), juce::Justification::centredLeft, 2);
+    }
+
     juce::Path fill (p);
     fill.lineTo (area.getRight(), area.getBottom());
     fill.lineTo (area.getX(), area.getBottom());
